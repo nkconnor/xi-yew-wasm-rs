@@ -1,30 +1,29 @@
-#![recursion_limit = "256"]
+#![recursion_limit = "5120"]
+extern crate failure;
 extern crate serde;
 extern crate serde_json;
-extern crate yew;
 extern crate stdweb;
 extern crate wasm_bindgen;
-extern crate failure;
+extern crate yew;
 extern crate zn_core;
 
-use failure::Error;
-use yew::prelude::*;
 use stdweb::web::Date;
+use yew::prelude::*;
 use yew::{
-    services::websocket::{WebSocketService, WebSocketStatus, WebSocketTask},
-    services::ConsoleService,
-    services::keyboard::KeyboardService,
-    html,
-    Component,
-    ComponentLink,
-    Html,
-    ShouldRender
+    html, services::keyboard::KeyboardService, services::ConsoleService, Component, ComponentLink,
+    Html, ShouldRender,
 };
 
-
+use socket::*;
 use wasm_bindgen::prelude::*;
-use yew::format::{Json, Text};
-use zn_core::messages::ClientStartedParams;
+use zn_core::messages::*;
+
+pub mod bus;
+pub mod line;
+pub mod socket;
+pub mod view;
+
+use crate::view::View;
 
 #[wasm_bindgen]
 pub fn run_app() -> Result<(), JsValue> {
@@ -35,19 +34,16 @@ pub fn run_app() -> Result<(), JsValue> {
 pub struct Model {
     link: ComponentLink<Self>,
     console: ConsoleService,
-    ws: Option<WebSocketTask>,
-    wss: WebSocketService,
+    socket: Box<Bridge<socket::Mediary>>,
     keyboard: KeyboardService,
-    value: i64,
+    views: Vec<ViewId>,
+    value: Vec<Line>,
 }
 
 pub enum Msg {
-    Increment,
-    Decrement,
-    Bulk(Vec<Msg>),
-    WSConnect,
-    WSReceived(Result<String, failure::Error>), // data received from server
-    WS(WebSocketStatus)
+    OpenFile,
+    WSReceived(ServerMessage),
+    Empty,
 }
 
 impl Component for Model {
@@ -55,91 +51,81 @@ impl Component for Model {
     type Properties = ();
 
     fn create(_: Self::Properties, link: ComponentLink<Self>) -> Self {
+        //link.callback(|server_message| {
+
+        //    match server_message {
+        //        ServerMessage::Pong{v} => (),
+        //        ServerMessage::EditorNotification(Notification::Result{id, result}) => {
+        //            ()
+        //        }
+        //        // we need an agent to forward the message to the view
+        //        ServerMessage::EditorMethod(Method::Update {update, view_id}) => {
+        //            // view_id_bridge_send ( update )
+        //            ()
+        //        },
+        //        _ => {}
+        //    };
+
+        //    Msg::WSReceived(server_message)
+        //});
+        let callback =
+            link.callback(|Receive::Forward(server_message)| Msg::WSReceived(server_message));
+        // `Worker::bridge` spawns an instance if no one is available
+        let mut socket = socket::Mediary::bridge(callback); // Connected! :tada:
+        socket.send(Send::Subscribe);
+
         Model {
             link,
             console: ConsoleService::new(),
-            ws: None,
-            wss: WebSocketService::new(),
-            keyboard: KeyboardService{},
-            value: 0,
+            socket: socket,
+            keyboard: KeyboardService {},
+            views: Vec::new(),
+            value: Vec::new(),
         }
     }
 
     fn update(&mut self, msg: Self::Message) -> ShouldRender {
         match msg {
-            Msg::Increment => {
-                self.value = self.value + 25;
-                self.console.log("plus 25");
+            Msg::WSReceived(ServerMessage::EditorNotification(Notification::Result {
+                id: _,
+                result,
+            })) => {
+                // New View is ready, open an empty browser tab
+                self.console.log("Adding new view");
+                self.views.push(result);
             }
-            Msg::Decrement => {
-                self.value = self.value - 150;
-                let msg = zn_core::messages::ClientMessage::ClientStarted { params: ClientStartedParams { client_extras_dir: None, config_dir: None}};
-                let test_message = Json(&msg);
-                match self.ws {
-                    Some(ref mut task) => {
-                        task.send(test_message);
+            Msg::OpenFile => {
+                self.socket.send(Send::Forward(ClientMessage::NewView {
+                    id: 0,
+                    params: NewViewParams {
+                        file_path: Some(String::from("/home/nconnor/p/zn/zn/build.rs")),
                     },
-                    _ => ()
-                }
-
-                self.console.log("minus one");
+                }));
             }
-            Msg::Bulk(list) => {
-                for msg in list {
-                    self.update(msg);
-                    self.console.log("Bulk action");
-                }
-            },
-
-            Msg::WSConnect => {
-                self.console.log("Connecting");
-                let cbout = self.link.callback(|Json(data)| Msg::WSReceived(data));
-
-                let cbnot = self.link.callback(|input| {
-                    Msg::WS(input)
-                });
-                if self.ws.is_none() {
-                    let task = self.wss.connect("ws://127.0.0.1:8080/ws/", cbout, cbnot.into());
-                    self.ws = Some(task.unwrap());
-                }
-                self.console.log("Done connecting");
-            },
-            Msg::WS(WebSocketStatus::Opened) => {
-                self.console.log("Opened socket")
-            },
-            Msg::WSReceived(Ok(message)) => {
-                self.console.log(format!("Client received message {}", message).as_str())
-            },
-            Msg::WSReceived(Err(e)) => {
-                self.console.log(format!("Client received error {:?}", e).as_str())
-            },
-            Msg::WS(WebSocketStatus::Closed) => {
-
-                self.console.log("Socket closed!")
-            }
-            Msg::WS(WebSocketStatus::Error) => {
-                self.console.log("Socket error!")
-            }
+            _ => {}
         }
         true
     }
-
 
     fn view(&self) -> Html {
         html! {
             <div>
                 <nav class="menu">
-                    <button onclick=self.link.callback(|_| Msg::Increment)>
-                        { "Increment Me" }
-                    </button>
-                    <button onclick=self.link.callback(|_| Msg::Decrement)>
-                        { "Decrement" }
-                    </button>
-                    <button onclick=self.link.batch_callback(|_| vec![Msg::Increment, Msg::Increment, Msg::WSConnect])>
-                        { "Increment Twice" }
+                    <button onclick=self.link.callback(|_| Msg::OpenFile)>
+                        { "Send New View" }
                     </button>
                 </nav>
-                <p>{ self.value }</p>
+                <div>
+                    {
+                        for self.views.iter().map(|id| {
+                            html! {
+                                <div><span></span>
+                                <View id={id} />
+                                </div>
+                            }
+                        })
+                    }
+                </div>
                 <p>{ Date::new().to_string() }</p>
             </div>
         }

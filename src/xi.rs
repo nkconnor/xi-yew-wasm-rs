@@ -5,11 +5,11 @@ use std::io::{self, BufRead, Read, Write};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 
-use serde_json::Value;
 use serde_json::json;
+use serde_json::Value;
+use std::sync::{Arc, Mutex};
 use xi_core_lib::XiCore;
 use xi_rpc::RpcLoop;
-use std::sync::{Mutex, Arc};
 
 use log::info;
 
@@ -63,11 +63,11 @@ impl BufRead for Reader {
             Ok(s) => {
                 info!("Reader received {:?}", s);
                 s
-            },
+            }
             Err(e) => {
                 info!("Reader has RecvError, {:?}", e);
-                return Ok(0)
-            },
+                return Ok(0);
+            }
         };
 
         if &event == r#"{"method":"command","params":{"method":"exit"}}"# {
@@ -109,12 +109,10 @@ impl ClientToClientWriter {
 
         match self.0.write(&raw_content) {
             Ok(_) => (),
-            Err(err) => ()
-            //slog::error!(self.log, "failed to send the notification {}: {}", method, err),
+            Err(err) => (), //slog::error!(self.log, "failed to send the notification {}: {}", method, err),
         };
     }
 }
-
 
 // core will write to core_to_client_writer,
 // i.e. core_to_client_reader will receive messages that can be
@@ -134,10 +132,15 @@ pub fn start_xi_core() -> (Writer, Reader, ClientToClientWriter) {
     let client_to_client_writer = ClientToClientWriter(Writer(from_core_tx));
     info!("Running core event loop!");
     let mut core_event_loop = RpcLoop::new(core_to_client_writer);
-    thread::spawn(move || core_event_loop.mainloop(|| client_to_core_reader, &mut core).map_err(|e|{
-       info!("mainloop failed with {:?}", e);
-        e
-    }).expect("core_event_loop.mainloop return OK"));
+    thread::spawn(move || {
+        core_event_loop
+            .mainloop(|| client_to_core_reader, &mut core)
+            .map_err(|e| {
+                info!("mainloop failed with {:?}", e);
+                e
+            })
+            .expect("core_event_loop.mainloop return OK")
+    });
 
     (
         client_to_core_writer,

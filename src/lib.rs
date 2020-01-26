@@ -1,13 +1,13 @@
-extern crate zn_core;
 extern crate tungstenite;
-use std::{env};
+extern crate zn_core;
 use async_std::net::{TcpListener, TcpStream};
 use async_std::task;
-use futures::{StreamExt, SinkExt, AsyncReadExt, TryFutureExt};
+use futures::{AsyncReadExt, SinkExt, StreamExt, TryFutureExt};
 use log::info;
-use std::sync::{Mutex, Arc};
+use std::env;
+use std::sync::{Arc, Mutex};
 use tungstenite::Message;
-use zn_core::messages::ClientMessage;
+use zn_core::messages::{ClientMessage, ServerMessage};
 
 mod xi;
 
@@ -43,7 +43,6 @@ async fn accept_connection(stream: TcpStream) {
 
     info!("New WebSocket connection: {}", addr);
 
-
     // Read WebSocket and send 2 XI
     let h1 = std::thread::spawn(move || loop {
         if let Some(msg) = async_std::task::block_on(ws_write.next()) {
@@ -52,18 +51,23 @@ async fn accept_connection(stream: TcpStream) {
             info!("Raw msg.to_text() = {}", msg_txt);
             let js_msg = ClientMessage::from_json(msg.to_text().unwrap()).unwrap();
             info!("Sending message to XI: {:?}", js_msg.to_json());
-            xi_write_from_client.0.send(js_msg.to_json().unwrap()).unwrap();
+            xi_write_from_client
+                .0
+                .send(js_msg.to_json().unwrap())
+                .unwrap();
         }
     });
-
 
     // Read XI and send 2 WebSocket
     let h2 = std::thread::spawn(move || loop {
         if let Ok(msg) = xi_read_to_client.0.recv() {
             info!("Sending message to client {}", msg);
+            let repr = ServerMessage::from_xi_json(&msg).unwrap();
             // send to client
-            async_std::task::block_on(ws_read.send(tungstenite::Message::Text(msg))).unwrap();
+            async_std::task::block_on(
+                ws_read.send(tungstenite::Message::Text(repr.to_json().unwrap())),
+            )
+            .unwrap();
         }
     });
-
 }

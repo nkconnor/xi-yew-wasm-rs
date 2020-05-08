@@ -59,6 +59,19 @@ fn main() -> Result<(), web_view::Error> {
         .line .code {
             display: inline-block;
         }
+        
+        .cursors {
+            position: absolute;
+            z-index:10;
+            color: transparent;
+        }
+        
+        .cursor {
+            display:inline-block;
+            width: 4px;
+            height: 1rem;
+            background:white;
+        }
     </style>
     <meta charset="utf-8" />
     <title>Yew</title>

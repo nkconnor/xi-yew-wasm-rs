@@ -10,10 +10,12 @@ use stdweb::{js, unstable::TryInto, Value};
 
 pub struct Line {
     id: u64,
+
     link: ComponentLink<Self>,
     linebus: Box<Bridge<LineBus>>,
     console: ConsoleService,
     text: String,
+    cursor: Option<Vec<u64>>,
     pub on_custom_fn: Callback<(u64, u64)>,
 }
 
@@ -50,6 +52,7 @@ impl Component for Line {
             linebus: agent,
             console: ConsoleService::new(),
             text: props.text,
+            cursor: props.cursor,
             on_custom_fn: props.on_custom_fn,
         }
     }
@@ -65,6 +68,19 @@ impl Component for Line {
     }
 
     fn view(&self) -> VNode {
+        let cursor_text = self.text.clone();
+        let text_node = match &self.cursor {
+            Some(positions) => {
+                let (start, end) = cursor_text.split_at((*positions.first().unwrap()) as usize);
+                html! {
+                    <span><span>{start}</span><span class="cursor"/><span>{end}</span></span>
+                }
+            }
+            None => html! {
+                <span>{cursor_text}</span>
+            },
+        };
+
         let on_click = self.link.callback(|e: ClickEvent| {
             let page_x = e.client_x();
             let page_y = e.client_y();
@@ -76,7 +92,7 @@ impl Component for Line {
                 var textNode;
                 var offset;
 
-                if (document.caretPositionFromPoint) {    // standard
+                if (document.caretPositionFromPoint) {    // standardhttps://uploads-ssl.webflow.com/5929dd19f82ea71d6234fa2d/59efc0274a0dc400019b36cd_shaw-0617-p-500.jpeg
                     range = document.caretPositionFromPoint(pageX, pageY);
                     textNode = range.offsetNode;
                     offset = range.offset;
@@ -97,7 +113,8 @@ impl Component for Line {
         html! {
             <div class="line">
                <div class="gutter">{self.id.clone()}</div>
-               <div class="code" onclick={on_click}>{self.text.clone()}</div>
+               <div class="cursors">{text_node.clone()}</div>
+               <div class="code" onclick={on_click}>{text_node}</div>
             </div>
         }
     }
